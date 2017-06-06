@@ -34,6 +34,7 @@ type Context  = MultiBimap Exp String
 data NamedLambda = LambdaVariable String                     -- ^ variable
                  | LambdaAbstraction String NamedLambda      -- ^ lambda abstraction
                  | LambdaApplication NamedLambda NamedLambda -- ^ function application
+                 | LambdaLiteral String                      -- ^ literal
 
 -- | Parses a lambda expression with named variables.
 -- A lambda expression is a sequence of one or more autonomous
@@ -51,7 +52,7 @@ lambdaexp = foldl1 LambdaApplication <$> (spaces >> sepBy1 simpleexp spaces)
 -- at the top level. It can be a lambda abstraction, a variable or another
 -- potentially complex lambda expression enclosed in parentheses.
 simpleexp :: Parser NamedLambda
-simpleexp = choice [lambdaAbstractionParser, variableParser, parens lambdaexp]
+simpleexp = choice [lambdaAbstractionParser, literalParser, variableParser, parens lambdaexp]
 
 -- | The returned parser parenthesizes the given parser
 parens :: Parser a -> Parser a
@@ -60,6 +61,14 @@ parens = between (char '(') (char ')')
 -- | Parses a variable. Any name can form a lambda variable.
 variableParser :: Parser NamedLambda
 variableParser = LambdaVariable <$> nameParser
+
+-- | Parses a literal. Any string enclosed in quotes is a literal
+literalParser :: Parser NamedLambda
+literalParser = LambdaLiteral <$> do
+  _ <- char '"'
+  s <- many (noneOf "\"")
+  _ <- char '"'
+  return s
 
 -- | Allowed variable names
 nameParser :: Parser String
@@ -80,6 +89,7 @@ showNamedLambda :: NamedLambda -> String
 showNamedLambda (LambdaVariable c)      = c
 showNamedLambda (LambdaAbstraction c e) = "λ" ++ c ++ "." ++ showNamedLambda e ++ ""
 showNamedLambda (LambdaApplication f g) = "(" ++ showNamedLambda f ++ " " ++ showNamedLambda g ++ ")"
+showNamedLambda (LambdaLiteral s)       = "\"" ++ s ++ "\""
 
 instance Show NamedLambda where
   show = showNamedLambda
@@ -100,6 +110,8 @@ tobruijn d context (LambdaAbstraction c e) = Lambda $ tobruijn newdict context e
   where newdict = Map.insert c 1 (Map.map succ d)
 -- Translation of applications is trivial.
 tobruijn d context (LambdaApplication f g) = App (tobruijn d context f) (tobruijn d context g)
+-- Translation fo literals
+tobruijn _ _ (LambdaLiteral s) = Literal s
 -- Every variable is checked on the variable dictionary and in the current scope.
 tobruijn d context (LambdaVariable c) =
   case Map.lookup c d of
@@ -122,6 +134,7 @@ nameIndexes _    _   (Var 0)    = LambdaVariable "undefined"
 nameIndexes used _   (Var n)    = LambdaVariable (used !! pred (fromInteger n))
 nameIndexes used new (Lambda e) = LambdaAbstraction (head new) (nameIndexes (head new:used) (tail new) e)
 nameIndexes used new (App f g)  = LambdaApplication (nameIndexes used new f) (nameIndexes used new g)
+nameIndexes _ _ (Literal s)     = LambdaLiteral s
 
 -- | Gives names to every variable in a deBruijn expression using
 -- alphabetic order.
